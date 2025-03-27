@@ -1,0 +1,874 @@
+#!/usr/bin/perl
+
+### author: 	Sean D. Gallaher
+### date: 	25-OCT-2016
+### filename: 	ccg
+### version:	v1.4.1
+
+use warnings;
+use strict;
+use Cwd ;
+use Cwd 'abs_path';
+
+
+# This makes print to STDOUT more responsive.
+{ my $ofh = select STDOUT;
+	$| = 1 ;
+	select $ofh ;
+}
+
+
+my $script = $0;
+my $scriptAbsPath = abs_path ($script) ;
+$scriptAbsPath =~ m/(.+)\/[^\/]+$/;
+my $pathToScript = $1;
+my $faInput = $pathToScript . "/data/reference_genome.v5.0.fa";
+my $vcfInput = $pathToScript . "/data/variants.vcf";
+my $gffInput = $pathToScript . "/data/reference_annotations.v5.5.gff";
+my $userSuppliedHapFile;
+my $pathToUserHapFile;
+my $workdir = getcwd;
+my $manual = $pathToScript . "/MANUAL.txt";
+my $strain;
+my $column;
+my %hapBlocks;
+my $userHapBlocks = 0;
+my $bk;
+my $blockPatternRef;
+my %highImpact;
+my @chromOrder;
+
+my $help = "\nInvalid input. Add -h to display the help file\n\n";
+my $noStrain = "\nNo strain specified. Run ccg -h for help.\n\n";
+my $noCustomFile = "\nRunning ccg with the -c flag requires a user supplied\nfile indicating which blocks are hap2.\n\nRun ccg -h for help.\n\n";
+
+my $flagnum = scalar @ARGV;
+
+if ($flagnum == 0) {
+	die "$help";
+}
+
+for (my $i=0; $i<$flagnum; $i++) {
+	my $flag = $ARGV[$i];
+	if ($flag eq "-h") {
+		print STDOUT "\n";
+		open (MANUAL, "<", $manual)
+			or die "Cannot open $manual: $!\n" ;
+		while (my $line = <MANUAL>) {
+			print STDOUT "$line";
+
+		}
+		close (MANUAL);
+		exit;
+	}
+	elsif ($flag eq "-l") {
+		&availableStrains ( $vcfInput );
+	}
+	elsif ($flag eq "-s") {
+		$i++;
+		$strain = $ARGV[$i];
+	}
+	elsif ($flag eq "-c") {
+		$i++;
+		$userSuppliedHapFile = $ARGV[$i];
+		unless (defined $userSuppliedHapFile) {
+			die "$noCustomFile";
+		}
+		$userHapBlocks = 1;
+		if ($userSuppliedHapFile =~ m/(.+)(\.tsv|\.txt|\.text)$/) {
+			$strain = $1 ;
+		}
+		else {
+			$strain = $userSuppliedHapFile; 
+		}
+		$pathToUserHapFile = $workdir . "/" . $userSuppliedHapFile ;
+		$blockPatternRef = &userSuppliedBlocks ($pathToUserHapFile) ;
+	}
+	else {
+		die "$help";
+	}
+}
+
+unless (defined $strain) {
+	die "$noStrain";
+}
+
+if ($userHapBlocks == 0) {
+	print STDOUT "\nChecking vcf file for $strain...";
+	$column = &checkForStrain ($vcfInput, $strain);
+	print STDOUT "Success!\n\nGenerating strain-specific genome...";
+	$bk = &generateFastaMode1 ($faInput, $vcfInput, $strain, $column);
+}
+elsif ($userHapBlocks == 1) {
+	print STDOUT "\nGenerating strain-specific genome...";
+	$bk = &generateFastaMode2 ($faInput, $vcfInput, $strain, $blockPatternRef);
+}
+
+print STDOUT "Success!\n\nGenerating annotation file...\n\n";
+
+my $customAnnoResult = &generateAnnotations ($bk, $gffInput, $strain);
+
+print STDOUT "\nYou should now have three new files:\n\n1. $strain.fa\t\tthe new strain-specific reference genome\n2. $strain.gff\t\tthe new annotation file\n3. $strain.report.txt\ta report summarizing the number of SNVs\n\t\t\tand InDels, plus predictions of\n\t\t\thigh-impact variants.\n\nDone!\n\n";
+
+#########################################################################
+#			Subroutines				 	#
+#########################################################################
+
+sub availableStrains {
+	### This is a subroutine to print a list of  all  ###
+        ### the available strains to STDOUT.              ###
+	$vcfInput = shift @_;
+	open ( VCF , "<" , $vcfInput ) 
+		or die "Cannot open $vcfInput: $!\n"; 
+	while (my $line = <VCF>) {
+		chomp $line;
+		if ($line =~ m/^##/) {
+			next;
+		}
+		elsif ($line =~ m/^#CHROM/) {
+			my @header = split (/\t/, $line);
+			my $totCols = scalar @header;
+			print STDOUT "\nAvailable strain names:\n\n";
+			for (my $i = 9 ; $i < $totCols; $i++) {
+				print STDOUT "$header[$i]\n";
+			}
+			close (VCF);
+			die "\nNow, rerun ccg with  \n-s <strain name>\nfor the strain of interest, \nor provide a user specified \nhaplotype with the -c option.\n\n";
+		}
+		elsif ($line =~ m/^chromosom/) {
+				close (VCF);
+				die "Problem! Could not find available strains\n";
+		}
+
+	}
+	return "success!";
+}
+
+
+##########################################################################
+
+sub userSuppliedBlocks {
+	### This is a subroutine to take a user supplied tsv file of ###
+	### haplotypes and put them in a %hapBlocks hash.            ###
+	### It takes the path to the user supplied file as an input  ###
+	### and returns a reference to the hash as an output.        ###
+	
+	my $userSupplied = shift @_ ;
+	print STDOUT "\nUser supplied haplotype requested...\n\n";
+	print STDOUT "Checking for user supplied file...\n";
+	open (USER, "<", $userSupplied) 
+		or die "Cannot open $userSupplied: $!. Run ccg -h for help.\n";
+	my %hapBlocks;
+	my $totalHap2blocks = 0;
+	while ( my $line = <USER> ) {
+		chomp $line;
+		if ($line =~ m/^#/) {
+			next;
+		}
+		elsif ($line =~ m/^(1|2)/) {
+			my @perLineArray = split (/\t/, $line);
+			my $haplotype = $perLineArray[0];
+			my $blockID = $perLineArray[1];
+			unless ($blockID =~ m/chr\d\d-\w/) {
+				die "$userSupplied may be corrupt. Run ccg -h for help.\n";
+			}
+			if ($haplotype == 2) {
+				$totalHap2blocks++;
+			}
+			$hapBlocks{$blockID} = $haplotype;
+		}
+	}
+	if ($totalHap2blocks == 0) {
+		print STDOUT "\nNo haplotype2 blocks were specified.\nThere is nothing for ccg to do.\nAre you sure you edited custom_haplotype.txt correctly?\nRun ccg -h for help.\n\n";
+	exit;
+	}
+	close (USER);
+	print STDOUT "\nHaplotype for $strain recognized...\n";
+	return \%hapBlocks;
+}
+
+##########################################################################
+
+sub checkForStrain {
+	### This is a subroutine to check that the
+	### requested strain is in the .vcf file 
+	### and determine which column it is in.
+	### It takes two inputs:
+	### 1) the vcf file
+	### 2) the strain name
+	### It returns the number of the column in the  
+	### vcf file with the indicated strain.      
+	
+	$vcfInput = shift @_;
+	$strain = shift @_;	
+	my $noStrainError = "The specified strain, $strain, is not in the vcf file.\n\nRun ccg -l to see available strains.\n\n";
+
+	open ( VCF , "<", $vcfInput) 
+		or die "Cannot open $vcfInput: $!\n";
+
+	while (my $line = <VCF>) {
+		chomp $line;
+		if ($line =~ m/^##/) {
+			next;
+		}
+		elsif ($line =~ m/^#CHROM/) {
+			my @header = split (/\t/, $line);
+			my $totCols = scalar @header;
+			for (my $i = 9; $i < $totCols; $i++) {
+				if ($header[$i] eq $strain) {
+					$column = $i;
+					last;
+				}
+			}
+		}
+		elsif ($line =~ m/^chrom/) {
+			if (!defined $column) {
+				die "$noStrainError";
+			}	
+			last;
+		}
+	}
+	close (VCF);
+	return $column;	
+}
+
+##########################################################################
+
+sub generateFastaMode1 {
+	### This subroutine takes a .vcf file of variants 
+	### (SNPs and small InDels)
+	### and uses it modify a reference fasta genome.
+	### It takes four inputs: 
+	### 1) a multifasta of the reference genome, 
+	### 2) a vcf file of variants,
+	### 3) the strain of interest (must be in the .vcf file)
+	### 4) the column number of the strain in the .vcf file
+	###
+	### It outputs:
+	### 1) a mutlifasta of the edited genome
+	### 2) a report sumarizing the numer of SNPs and InDels
+	###    and their predicted effects
+	### 3) a "bookkeeping" file needed for generating
+	###    the annotation file
+
+	$faInput = shift @_ ;
+	$vcfInput = shift @_ ;
+	$strain = shift @_ ;
+	$column = shift @_ ;
+
+	### Open the input/output files ###
+
+	open (FA, "<", $faInput) 
+		or die "Cannot open $faInput: $!\n";
+	open (VCF, "<", $vcfInput) 
+		or die "Cannot open $vcfInput: $!\n";
+
+	my $strainFasta = "$workdir/$strain.fa";
+	my $report = "$workdir/$strain.report.txt";
+	$bk = "$workdir/$strain.bookkeeping.csv";
+
+	open (OUTFA, ">", $strainFasta)
+		or die "Cannot open $strainFasta: $!\n";
+	open (REPORT, ">", $report) 
+		or die "Cannot open $report: $!\n";
+	open (BK, ">", $bk)
+		or die "Cannot open $bk: $!\n";
+
+	### Put all of the reference sequence fastas into a hash ###
+
+	my %fasta;
+	my $header;
+	my $seq;
+
+	while (my $line = <FA>) {
+		chomp $line;
+		if ($line =~ m/^$/) {
+			next;
+		}
+		elsif (!defined $header) {
+			if ($line =~ m/^>/) {
+				$line =~ m/^>(.+)/;
+				$header = $1;
+			}
+		next;
+		} 
+		elsif ($line =~ m/^>/) {
+			$fasta{$header}=$seq;
+			push (@chromOrder, $header);
+			$line =~ m/^>(.+)/;
+			$header = $1;
+			$seq = "";
+			next;
+		}
+		else {
+			$seq .= $line;
+		}
+	}	
+	$fasta{$header} = $seq;
+	push (@chromOrder, $header);
+	
+
+	### Cycle through the vcf file and add relevant variants ###
+	### to %variants                                         ###
+
+	open (VCF, "<", $vcfInput)
+		or die "Cannot open $vcfInput: $!\n";
+
+	my %variants;
+
+	while (my $line = <VCF>) {
+		my $chrom;
+		my $pos;
+		my $ref;
+		my $alt;
+		my $alts;
+		my @alleles;
+		my $allele;
+		my $info;
+		chomp $line;
+		if ($line =~ m/^#/) {
+			next;
+		}
+		else {
+			my @lineArray = split (/\t/, $line);
+			if ($lineArray[6] eq "PASS") {
+				my $variantCall = $lineArray[$column];
+				if ($variantCall eq ".") {
+					next;
+				}
+				else {
+					$variantCall =~ m/^(\d):/;
+					$allele = $1;
+					if ($allele != 0) {
+						$chrom = $lineArray[0];
+						$pos = $lineArray[1];
+						$ref = $lineArray[3];
+						$alts = $lineArray[4];
+						@alleles = split ( /,/ , $alts) ;
+						unshift (@alleles, $ref) ;
+						$alt = $alleles[$allele]; 	
+						$variants{$chrom}{$pos}{'ref'}=$ref;
+						$variants{$chrom}{$pos}{'alt'}=$alt;
+						$info = $lineArray[7];
+						if ($info =~ m/EFF=([^\;]+)/) {
+							my $effects = $1;
+							my @snpEffPred = split ( /,/ , $effects);
+							foreach my $prediction (@snpEffPred) {
+								if ($prediction =~ m/^(frameshift_variant|stop_gained)/) {
+									my $varType = $1;
+									$prediction =~ m/.*\((.*)\)/;
+									my @effSubFields = split (/\|/,$1); 
+									my $eleventhField = $effSubFields[10];
+									$eleventhField =~ m/(\d*)/;
+									my $highImpactAllele = $1;
+									if ( $highImpactAllele == $allele ) {
+										$prediction =~ m/(Cre\d{2}.g\d{6})/;
+										my $gid = $1;
+										$highImpact{$chrom}{$gid}{$pos} = $varType;
+									}
+								}
+							}
+						} 
+					}
+				}
+			}
+		}
+	}
+
+	### Go through each chromosome in the %fasta hash.    ###
+	### Then, go through each nt in the chromosome.       ###
+	### If there is a match in the %variants hash,        ###
+	### make the change and then put the altered seq      ###
+	### back in the %fasta hash. If the change is an      ###
+	### Indel, adjust the bookkeeping hash as needed.     ###
+	### Summarize the results in the REPORT.              ###
+	### Write the edited fasta chromosomes to OUTFA       ###
+
+	print REPORT "## Summary of SNVs and InDels by Chromosome ##\n\nchromosome\tSNVs\tInDels\n";
+
+
+	foreach my $chrom (@chromOrder) {
+		print STDOUT "\nediting $chrom...";
+		my $seq = $fasta{$chrom};
+		my @refseq = split (//,$seq);
+		my @altseq;
+		my $len = length $seq;
+		my $delta = 0;			# plus / minus nt position
+		my $snpTotal = 0 ;		# for the report
+		my $indelTotal = 0 ;  		# for the report
+		my @bkChrom;  			# for bookkeeping per chromosome
+		for (my $i=1; $i <= $len; $i++) {
+			my $nt = shift @refseq;
+			if (defined $variants{$chrom}{$i}) {
+				my $ref = $variants{$chrom}{$i}{'ref'};
+				my $alt = $variants{$chrom}{$i}{'alt'};
+				my $reflen = length $ref;
+				my $altlen = length $alt;
+				if ($reflen == 1) {
+					if ($altlen == 1) {    # reflen=altlen=1 => SNP
+						$snpTotal++;
+						push (@altseq, $alt);
+						push (@bkChrom, $delta);
+					}
+					else {               # reflen=1<altlen => insertion
+						$indelTotal++;
+						push (@bkChrom, $delta);
+						$delta--;
+						my @insertion = split (//, $alt);
+						for (my $j=1; $j <= $altlen ; $j++) {
+							my $altnt = shift @insertion;
+							push (@altseq, $altnt);	
+							$delta++;
+						}
+					}
+				}
+				else {                        # reflen >1 => deletion
+					$indelTotal++;
+					my @altnts = split (//, $alt);
+					for (my $j = 1; $j < $reflen ; $j++) {
+						shift @refseq;
+						$i++;
+						my $altnt = shift @altnts;
+						if (defined $altnt) {
+							push (@bkChrom, $delta);
+							push (@altseq, $altnt);
+						}	
+						else {
+							$delta--;
+							push (@bkChrom, $delta);
+						}	
+					}
+					$delta--;
+					push (@bkChrom, $delta);
+				}
+			}
+			else {
+				push (@altseq, $nt);
+				push (@bkChrom, $delta); 
+			}
+		}	
+		my $edited = join ("", @altseq);
+		my $bkstring = join (",", @bkChrom);
+		print BK ">$chrom\n$bkstring\n";
+		print REPORT "$chrom\t$snpTotal\t$indelTotal\n";
+		print OUTFA ">$chrom\n$edited\n";
+	} 
+
+
+	### Close all the files  ###
+ 
+	close (FA);
+	close (VCF);
+	close (BK);
+	close (OUTFA);
+
+	return "$bk";
+}
+
+##########################################################################
+
+sub generateFastaMode2 {
+	### This subroutine takes a .vcf file of variants
+	### (SNPs and small InDels)
+	### and uses it modify a reference fasta genome.
+	### It takes four inputs:
+	### 1) a multifasta of the reference genome,
+	### 2) a vcf file of variants,
+	### 3) the name of the strain
+	### 4) a reference to a hash of the hap2 blocks
+	###
+	### It outputs:
+	### 1) a mutlifasta of the edited genome
+	### 2) report sumarizing the numer of SNPs and InDels
+	###    and their predicted effects
+	### 3) a "bookkeeping" file needed for generating
+	###    the annotation file.
+	
+	$faInput = shift @_;
+	$vcfInput = shift @_;
+	$strain = shift @_;
+	$blockPatternRef = shift @_;
+	%hapBlocks = %{$blockPatternRef};
+	
+	
+	### Open the input/output files ###
+
+	open (FA, "<", $faInput)
+		or die "Cannot open $faInput: $!\n";
+	open (VCF, "<", $vcfInput)
+		or die "Cannot open $vcfInput: $!\n";
+
+	my $strainFasta = "$workdir/$strain.fa";
+	my $report = "$workdir/$strain.report.txt";
+	$bk = "$workdir/$strain.bookkeeping.csv";
+
+	open (OUTFA, ">", $strainFasta)
+		or die "Cannot open $strainFasta: $!\n";
+	open (BK, ">", $bk)
+		or die "Cannot open $bk: $!\n";
+
+	### Put all of the reference sequence fastas into a hash ###
+
+	my %fasta;
+	my $header;
+	my $seq;
+
+	while (my $line = <FA>) {
+		chomp $line;
+		if ($line =~ m/^$/) {
+			next;
+		}
+		elsif (!defined $header) {
+			if ($line =~ m/^>/) {
+				$line =~ m/^>(.+)/;
+				$header = $1;
+			}
+		next;
+		}
+		elsif ($line =~ m/^>/) {
+			$fasta{$header}=$seq;
+			push (@chromOrder, $header);
+			$line =~ m/^>(.+)/;
+			$header = $1;
+			$seq = "";
+			next;
+		}
+		else {
+			$seq .= $line;
+		}
+	}
+	$fasta{$header} = $seq;
+	push (@chromOrder, $header);
+	
+	### Cycle through the vcf file and the %hapBlocks hash.	###
+	### If the haplotype block of a variant is labeled as	###
+	### as "2" in %hapBlocks, then the variant is added to	###
+	### the %variants hash.					###
+
+	open (VCF, "<", $vcfInput)
+		or die "Cannot open $vcfInput: $!\n";
+
+	my %variants;
+
+	while (my $line = <VCF>) {
+		my $chrom;
+		my $pos;
+		my $ref;
+		my $alts;
+		my $block;
+		my $info;
+		chomp $line;
+		if ($line =~ m/^#/) {
+			next;
+		}
+		else {
+			my @lineArray = split (/\t/, $line);
+			if ($lineArray[7] =~ m/HapBlockRegion/) {
+				$chrom = $lineArray[0];
+				$pos = $lineArray[1];
+				$ref = $lineArray[3];
+				$alts = $lineArray[4];
+				$info = $lineArray[7];
+				$info =~ m/HapBlockRegion=(chr\d\d-\w)/;
+				$block = $1;
+				if ($hapBlocks{$block} == 2) {	
+					if ($alts =~ m/,/) {
+						my @altArray = split (/,/ , $alts) ;
+						unshift (@altArray , $ref) ;
+						$lineArray[7] =~ m/LikelyHapBlockAllele=(\d+)/;
+						my $allele = $1;
+						my $alt = $altArray[$allele];
+						$variants{$chrom}{$pos}{'ref'}=$ref;
+						$variants{$chrom}{$pos}{'alt'}=$alt;
+					}
+					else  {
+						$variants{$chrom}{$pos}{'ref'}=$ref;
+						$variants{$chrom}{$pos}{'alt'}=$alts;
+					}
+					if ($info =~ m/EFF=([^\;]+)/) {
+						my $effects = $1;
+						my @snpEffPred = split ( /,/ , $effects);
+						foreach my $prediction (@snpEffPred) {
+							if ($prediction =~ m/^(frameshift_variant|stop_gained)/) {
+									my $varType = $1;
+									$prediction =~ m/(Cre\d{2}.g\d{6})/;
+									my $gid = $1;
+									$highImpact{$chrom}{$gid}{$pos} = $varType;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+
+	### Go through each chromosome in the %fasta hash	###
+	### Then, go through each nt in the chromosome		###
+	### If there is a match in the %variants hash,		###
+	### make the change and then put the altered seq	###
+	### back in the %fasta hash. If the change is an 	###
+	### Indel, adjust the bookkeeping hash as needed.	###
+	### Summarize the results in the  REPORT.		###
+	### Write the edited fasta chromosomes to OUTFA		###
+
+
+	print REPORT "## Summary of SNVs and InDels by Chromosome ##\n\nchromosome\tSNVs\tInDels\n";
+
+	foreach my $chrom (@chromOrder) {
+		print STDOUT "\nediting $chrom...";
+		my $seq = $fasta{$chrom};
+		my @refseq = split (//,$seq);
+		my @altseq;
+		my $len = length $seq;
+		my $delta = 0;				# plus / minus nt position
+		my $snpTotal = 0 ;			# for the report
+		my $indelTotal = 0 ;			# for the report
+		my @bkChrom;				# for bookkeeping per chromosome
+		for (my $i=1; $i <= $len; $i++) {
+			my $nt = shift @refseq;
+			if (defined $variants{$chrom}{$i}) {
+				my $ref = $variants{$chrom}{$i}{'ref'};
+				my $alt = $variants{$chrom}{$i}{'alt'};
+				my $reflen = length $ref;
+				my $altlen = length $alt;
+				if ($reflen == 1) {
+					if ($altlen == 1) {		# reflen=altlen=1 => SNP
+						$snpTotal++;
+						push (@altseq, $alt);
+						push (@bkChrom, $delta);
+					}
+					else {			# reflen=1<altlen => insertion
+						$indelTotal++;
+						push (@bkChrom, $delta);
+						$delta--;
+						my @insertion = split (//, $alt);
+						for (my $j=1; $j <= $altlen ; $j++) {
+							my $altnt = shift @insertion;
+							push (@altseq, $altnt);
+							$delta++;
+						}
+					}
+				}
+				else {		# reflen >1 => deletion
+					$indelTotal++;
+					my @altnts = split (//, $alt);
+					for (my $j = 1; $j < $reflen ; $j++) {
+						shift @refseq;
+						$i++;
+						my $altnt = shift @altnts;
+						if (defined $altnt) {
+							push (@bkChrom, $delta);
+							push (@altseq, $altnt);
+						}
+						else {
+							$delta--;
+							push (@bkChrom, $delta);
+						}
+					}
+					$delta--;
+					push (@bkChrom, $delta);
+				}
+			}
+			else {
+				push (@altseq, $nt);
+				push (@bkChrom, $delta);
+			}
+		}
+		my $edited = join ("", @altseq);
+		my $bkstring = join (",", @bkChrom);
+		print BK ">$chrom\n$bkstring\n";
+		print REPORT "$chrom\t$snpTotal\t$indelTotal\n";
+		print OUTFA ">$chrom\n$edited\n";
+	}
+
+
+
+
+	### Close all the files  ###
+
+	close (FA);
+	close (VCF);
+	close (BK);
+	close (OUTFA);
+
+	return "$bk";
+}
+
+##########################################################################
+
+sub generateAnnotations {
+	### This is subroutine to generate a strain-specific gff.
+	### It is designed to take the "bookkeeping.csv"
+	### output and use it to adjust a .gff file of 
+	### gene annotations. 
+	### Additionally, it will label any genes 
+	### that snpEff predicts have a frameshift or 
+	### nonsense mutation. 
+	###
+	### It takes 3 inputs:
+	### 1) the gff3 file of gene anotations
+	### 2) the bookkeeping.csv file
+	### 3) the strain name 
+	### It outputs a gff file of adjusted coordinates 
+	
+	$bk = shift @_ ;
+	$gffInput = shift @_ ;
+	$strain = shift @_ ;
+
+	### Open the input/output files ###
+
+	open (BK, "<", $bk)
+		or die "Cannot open $bk: $!\n";
+	open (GFF, "<", $gffInput) 
+		or die "Cannot open $gffInput: $!\n";
+
+	my $strainGff = "$strain.gff";
+
+	open (OUTGFF, ">", $strainGff)
+		or die "Cannot open $strainGff: $!\n";
+
+	### Read the bookkeeping file and inport its ###
+	### contents into %bk                        ###
+
+	my %bk;
+	my $header;
+
+	while (my $line = <BK>) {
+		chomp $line;
+		if ($line =~ m/^>(.+)/) {
+			$header = $1;
+		}
+		else {
+			my @delta = split (/,/, $line);
+			$bk{$header}=\@delta;
+		}
+	}
+
+	close (BK);
+
+	### Go through the GFF file and adjust each of the ###
+	### chromosome positions based on the bookkeeping  ###
+	### hash, and write the results to OUTGFF.         ###
+	### Also, check %highImpact to see if the gene     ###
+	### is listed, and if so, add it as a note to 	   ###
+	### the GFF file.				   ###
+
+	my $currentChrom = "";
+	my @delta;
+	my %adjHighImpact;
+	my %cds;
+
+	while (my $line = <GFF>) {
+		chomp $line;
+		if ($line =~ m/^#/) {
+			print OUTGFF "$line\n";
+		}
+		else {
+			my @lineArray = split (/\t/, $line);
+			my $chrom = $lineArray[0];
+			if ($chrom ne $currentChrom) {
+				@delta = @{$bk{$chrom}};
+				$currentChrom = $chrom ;	
+			}
+			my $type = $lineArray[2];
+			my $start = $lineArray[3];
+			my $end = $lineArray[4];
+			my $zeroStart = $start - 1;
+			my $zeroEnd = $end - 1;
+			my $startDelta = $delta[$zeroStart];
+			my $endDelta = $delta[$zeroEnd];
+			my $adjStart = $start + $startDelta;
+			my $adjEnd = $end + $endDelta;
+			$lineArray[3] = $adjStart;
+			$lineArray[4] = $adjEnd;
+			my $phase = $lineArray[7];
+			my $attributes = $lineArray[8];
+			$attributes =~ m/ID=(Cre\d{2}\.g\d{6})/;
+			my $gid = $1;
+			if (exists $highImpact{$chrom}{$gid}) {
+				my %counts;
+				foreach my $highImpactPos (sort keys  %{$highImpact{$chrom}{$gid}}) { 
+					my $effect = $highImpact{$chrom}{$gid}{$highImpactPos} ;
+					$counts{$effect}++;
+					my $zeroHighImpactPos = $highImpactPos - 1;
+					my $highImpactPosDelta = $delta[$zeroHighImpactPos]; 
+					my $adjHighImpactPos = $highImpactPos + $highImpactPosDelta ;
+					$adjHighImpact{$chrom}{$gid}{$adjHighImpactPos} = $effect;
+				}
+				my $note = "\;Note=snpEff_predicts" ;
+				my $effectCount = 0;
+				foreach my $effect (sort keys %counts) { ;
+					my $count = $counts{$effect};
+					if ($effectCount == 0) {
+						$note .= ":" . $count . " x " . $effect ;
+					}
+					else {
+						$note .= " and " . $count . " x " . $effect ;
+					}
+					$effectCount++;
+				}
+				$attributes .= $note;
+				$lineArray[8] = $attributes;
+			}
+			if ($type eq 'CDS') {
+				$attributes =~ m/ID=(Cre\d{2}\.g\d{6}.+CDS)/;
+				my $tid = $1;
+				if (exists $cds{$tid}) {
+					my $lengthMod3 = $cds{$tid}{'lengthMod3'};
+					my $phase =  $cds{$tid}{'phase'};
+					my $newPhase = ((3-($lengthMod3 - $phase))%3);
+					$lineArray[7] = $newPhase;
+					$cds{$tid}{'phase'} = $newPhase;
+					my $length = $adjEnd - $adjStart + 1;
+					$lengthMod3 = $length%3 ; 
+					$cds{$tid}{'lengthMod3'} = $lengthMod3;
+				}
+				else {
+					$cds{$tid}{'phase'} = 0 ;
+					my $length = $adjEnd - $adjStart + 1;
+					my $lengthMod3 = $length%3 ; 
+					$cds{$tid}{'lengthMod3'} = $lengthMod3;
+					$lineArray[7] = 0;
+				}
+			}
+			my $edited = join ("\t", @lineArray);
+			print OUTGFF "$edited\n";
+		}
+	}
+
+	### Add the snpEff predictions to the report ###
+
+	print STDOUT "Adding high impact variants to the report...\n\n";
+
+	print REPORT "\n\n## High Impact SnpEff Predictions ##\n\ngene_id\tchromosome\tposition\teffect\n";
+
+	foreach my $chrom (@chromOrder) {
+		foreach my $gid (sort keys %{$adjHighImpact{$chrom}}) {
+			foreach my $pos (sort keys %{$adjHighImpact{$chrom}{$gid}}) {
+				my $effect = $adjHighImpact{$chrom}{$gid}{$pos};
+				print REPORT "$gid\t$chrom\t$pos\t$effect\n";
+			}
+		}
+	}
+	
+
+	### Close all of the files and delete the bookkeeping file  ###
+
+	close (GFF);
+	close (OUTGFF);
+	close (REPORT);
+	unlink glob $bk;
+
+	return "success!";
+}
+
+
+##########################################################################
+
+
+
+
+
+
+
