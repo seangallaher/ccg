@@ -1,0 +1,51 @@
+=== CHANGELOG.txt ===
+
+v1.4.1
+25-OCT-2016
+A minor update to add two additional strains:
+   CC-4533
+   1A+
+
+
+v1.4
+27-JUN-2016
+This version adds:
+1) CCG now correctly adjusts the "phase" in the 
+   gff annotation file for genes with frame-shift
+   InDels. Thanks to Olivier Vallon (IBPC) 
+   for bringing this bug to my attention.
+2) Various bug fixes and minor improvements.
+
+v1.3.1 
+21-APR-2016
+Minor bug fix:
+Corrects problem where SnpEff high impact variants
+with warnings cause a fault.
+
+v1.3
+29-JUL-2015
+This version adds:
+1) Genes that are predicted by SnpEff to have high impact variants 
+   (frame shifts and nonsense variants) are now labeled in the
+   strain-specific annotation file. Additionally, the number of 
+   high impact variants is listed in the report file.
+2) Various bug fixes and minor improvements. 
+
+v1.2
+15-MAY-2015
+This version adds:
+1) Mode 1 will now use all strain-specific variants, not just haplotype-specific ones.
+2) Awareness of multiple variants at the same locus.
+
+v1.1
+06-MAY-2015
+This version adds:
+1) The ability to make a custom genome and annotation
+   file for any strain with a known pattern of haplotype 2 blocks. 
+2) Greatly expanded documentation. 
+3) Additional validation of user inputs with feedback. 
+4) Progress of each stage is sent to STDOUT. 
+
+v1.0
+03-APR-2015
+The first working version of the Custom Chlamy Generator.

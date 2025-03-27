@@ -1,0 +1,68 @@
+###### copy_and_edit_this_file_for custom_haplotype.txt #####
+###
+### This file allows the user to specify an arbitrary
+### haplotype pattern of Chlamydomonas reinhardtii
+### and generate a custom genome and annotation file
+### for it with the Custom Chlamy Generator.
+###
+### To create a custom haplotype genome, do the following:
+###
+### 1) Make a copy of this file in the 
+###    your working directory.
+###    Name the copy with the name of your strain.
+###       e.g. if your strain is CC-4351, save a copy of 
+###       this file as CC-4351
+###       Your genome and annotation files will be 
+###       called CC-4351.fa and CC-4351.gff.
+###    
+### 2) Change the 1 in the first column to a 2 
+###    for any block that is haplotype 2 in your strain.
+###
+### 3) Run ccg -c <name-of-this-file>
+###         ( e.g. ccg -c CC-4351 )
+###
+########################################################
+
+
+
+1	chr01-A		# chromosome_1: 1717427-3188098
+1	chr01-B		# chromosome_1: 3543098-5920858
+1	chr01-C		# chromosome_1: 6115512-6320512
+1	chr02-A		# chromosome_2: 4066433-4888063
+1	chr02-B		# chromosome_2: 6165360-6925459
+1	chr03-A		# chromosome_3: 8412815-8861169
+1	chr03-B		# chromosome_3: 8861170-9028966
+1	chr04-A		# chromosome_4: 151353-238452
+1	chr06-A		# chromosome_6: 1-281650
+1	chr06-B		# chromosome_6: 288651-1360343
+1	chr06-C		# chromosome_6: 1360344-1423425
+1	chr06-D		# chromosome_6: 1423426-1761623
+1	chr06-E		# chromosome_6: 1761624-1967222
+1	chr08-A		# chromosome_8: 118000-713465
+1	chr09-A		# chromosome_9: 1-2366573
+1	chr09-B		# chromosome_9: 2926229-3118228
+1	chr10-A		# chromosome_10: 62001-365649
+1	chr10-B		# chromosome_10: 365650-644298
+1	chr10-C		# chromosome_10: 5882189-6570585
+1	chr11-A		# chromosome_11: 16001-1280878
+1	chr11-B		# chromosome_11: 1280879-2193206
+1	chr12-A		# chromosome_12: 1-437166
+1	chr12-B		# chromosome_12: 505166-630166
+1	chr12-C		# chromosome_12: 697496-843594
+1	chr12-D		# chromosome_12: 974762-1719321
+1	chr12-E		# chromosome_12: 1719322-2483019
+1	chr12-F		# chromosome_12: 7219514-8662505
+1	chr12-G		# chromosome_12: 8971075-9725409
+1	chr15-A		# chromosome_15: 842837-1276864
+1	chr16-A		# chromosome_16: 9001-736752
+1	chr16-B		# chromosome_16: 868455-1952379
+1	chr16-C		# chromosome_16: 6342055-6386055
+1	chr16-D		# chromosome_16: 6398154-6974942
+1	chr16-E		# chromosome_16: 7015856-7777706
+1	chr17-A		# chromosome_17: 270199-352132
+1	chr17-B		# chromosome_17: 352133-475231
+1	chr17-C		# chromosome_17: 475232-1134081
+1	chr17-D		# chromosome_17: 1134082-1442180
+1	chr17-E		# chromosome_17: 2153378-3333368
+1	chr17-F		# chromosome_17: 3813427-5983702
+1	chr17-G		# chromosome_17: 5983703-6075633

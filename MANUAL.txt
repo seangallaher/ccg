@@ -1,0 +1,60 @@
+
+=== CCG v1.4 Manual ===
+
+ccg can be run in one of two modes:
+
+Mode 1, you can ask ccg for the list of strains that it has 
+variant calls for, and then run ccg for one of those strains.
+                   - or -
+Mode 2, for a strain that is not included, you can specify a pattern 
+of haplotype 2 blocks and a strain name of your choosing. 
+
+In either mode, ccg generates three files:
+1) a strain-specific reference genome in multi-fasta format
+2) coordinate-adjusted gene annotations in gff3 format
+3) a report summarizing the results
+
+Those variants that are predicted by SnpEff to have nonsense and frameshift
+mutations relative the standard reference are highlighted in the report,
+and have an added notation in the gff3 file. 
+
+
+Options:
+
+ccg -s <strain-name>	Run ccg in mode 1. If <strain-name> is one of the known strains, 
+			ccg will generate a multifasta and gff file for that
+			strain.
+
+ccg -l 			Print a list of strains that are known to ccg. Choose
+			a strain from the list, and re-run ccg with the -s option and
+			the strain name.	
+			Note that the strain name must be coppied exactly. 
+
+ccg -c <your-hap-file>	Run ccg in mode 2 to generate a multifasta and gff file for 
+			any standard laboratory strain with a user-specified haplotype 
+			pattern. Before running in mode 2, you must edit the 
+			copy_and_edit_this_file_for_custom_haplotype.txt 
+			file to specify the desired haplotype 2 regions. 
+			Name your edited file with the name of your strain, 
+			and enter that same name after the -c (see below for details).
+
+ccg -h 			Print the help manual. 
+
+
+To specify a haplotype pattern for a strain that is unknown to ccg (i.e. run in mode 2), 
+do the following:
+
+1) Make a copy of copy_and_edit_this_file_for_custom_haplotype.txt 
+   in your working directory. Make the name of your copy the name of your strain.
+       e.g. if your strain is CC-4351, make a copy of edit_this_file.txt called CC-4351
+       Your strain-specific reference genome and annotation files 
+       will be called CC-4351.fa and CC-4351.gff.
+
+ 2) Open your copy in a text editor, and change the 1 in the first column 
+    to a 2 for any block that is haplotype 2 in your strain.
+
+ 3) Run ccg -c <name-of-your—new-file>
+         ( e.g. ccg -c CC-4351 )
+
+
+

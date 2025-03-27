@@ -1,0 +1,37 @@
+=== INSTALLATION.txt ===
+
+Requirements:
+
+ccg requires a recent version of perl (tested with perl v5.16.3) 
+with the Cwd core module.  
+
+
+Installation:
+The following directions assume a basic working understanding 
+of shell computing (e.g. Terminal.app on MacOS). The example 
+commands listed here have been tested to work in a default
+installation of MacOSX v10.10. They may need to be modified 
+depending on your computer setup. 
+
+1) Download ccg from BitBucket at:
+     https://bitbucket.org/gallaher/custom-chlamy-generator/downloads
+
+2) Move the zip file to a convenient location and expand it with 
+   your unzip app of choice. For example, type:
+		unzip gallaher-custom-chlamy-generator-*.zip
+
+3) Change into the ccg directory. For example, type:
+		cd gallaher-custom-chlamy-generator-*
+
+4) Make ccg executable. For example:
+		chmod 755 ccg
+
+5) Run the ccg manual for further instructions. Type:
+      		./ccg -h   
+
+4) Optional: Create a symlink to ccg in your $PATH to run the app
+   in other working directories. The data directory and the ccg app
+   must stay in the same directory.  
+
+
+
